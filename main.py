@@ -15,6 +15,7 @@ PANELS = 3
 INFO_HEIGHT = 90
 WIDTH = MAZE_WIDTH * PANELS + GAP * (PANELS - 1)
 HEIGHT = MAZE_HEIGHT + INFO_HEIGHT
+EXTRA_PASSAGES = 25
 
 BG_COLOR = (20, 20, 30)
 WALL_COLOR = (230, 230, 230)
@@ -59,17 +60,20 @@ def create_grid():
     return [[Cell(col, row) for col in range(COLS)] for row in range(ROWS)]
 
 
-def get_unvisited_neighbors(grid, cell):
+def get_all_neighbors(grid, cell):
+    """All neighbors inside the grid, visited or not."""
     neighbors = []
     directions = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # up, right, down, left
     for dc, dr in directions:
         col = cell.col + dc
         row = cell.row + dr
         if 0 <= col < COLS and 0 <= row < ROWS:
-            neighbor = grid[row][col]
-            if not neighbor.visited:
-                neighbors.append(neighbor)
+            neighbors.append(grid[row][col])
     return neighbors
+
+
+def get_unvisited_neighbors(grid, cell):
+    return [n for n in get_all_neighbors(grid, cell) if not n.visited]
 
 
 def get_open_neighbors(grid, cell):
@@ -113,6 +117,14 @@ def generation_step(grid, stack):
         stack.append(next_cell)
     else:
         stack.pop()
+
+
+def add_loops(grid, count):
+    """Knock down extra random walls so the maze has more than one route."""
+    for _ in range(count):
+        cell = grid[random.randrange(ROWS)][random.randrange(COLS)]
+        neighbor = random.choice(get_all_neighbors(grid, cell))
+        remove_walls(cell, neighbor)
 
 
 class Solver:
@@ -260,15 +272,24 @@ def draw_stats(screen, font, solver, offset_x, winner):
         y += 24
 
 
+def update_caption(loops_on):
+    state = "ON" if loops_on else "OFF"
+    pygame.display.set_caption(
+        f"Maze Solver Race - R: new maze | L: loops {state}"
+    )
+
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH + 1, HEIGHT + 1))
-    pygame.display.set_caption("Maze Solver Race - press R for a new maze")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 26)
 
     solver_classes = [DFSSolver, BFSSolver, AStarSolver]
     offsets = [i * (MAZE_WIDTH + GAP) for i in range(PANELS)]
+
+    loops_on = True
+    update_caption(loops_on)
 
     grid, stack = new_maze()
     solvers = []
@@ -279,15 +300,24 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                grid, stack = new_maze()
-                solvers = []
-                winner = None
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    grid, stack = new_maze()
+                    solvers = []
+                    winner = None
+                elif event.key == pygame.K_l:
+                    loops_on = not loops_on
+                    update_caption(loops_on)
+                    grid, stack = new_maze()
+                    solvers = []
+                    winner = None
 
         # 1. Generate, then 2. race the solvers
         if stack:
             generation_step(grid, stack)
         elif not solvers:
+            if loops_on:
+                add_loops(grid, EXTRA_PASSAGES)
             start = grid[0][0]
             end = grid[ROWS - 1][COLS - 1]
             solvers = [cls(grid, start, end) for cls in solver_classes]
