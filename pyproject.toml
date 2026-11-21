@@ -1,19 +1,15 @@
 [project]
 name = "maze-solver"
 version = "0.1.0"
-description = "Add your description here"
+description = "Random maze generation and a race between DFS, BFS and A* pathfinding"
 readme = "README.md"
 authors = [
-    { name = "vehspota", email = "vehspota@gmail.com" }
+    { name = "vehspota" }
 ]
 requires-python = ">=3.13"
 dependencies = [
     "pygame>=2.6.1",
 ]
 
-[project.scripts]
-maze-solver = "maze_solver:main"
-
-[build-system]
-requires = ["uv_build>=0.13.8,<0.14.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
