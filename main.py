@@ -1,12 +1,17 @@
 import random
+from collections import deque
 
 import pygame
 
-CELL_SIZE = 40
+CELL_SIZE = 30
 COLS = 15
 ROWS = 15
-WIDTH = COLS * CELL_SIZE
-HEIGHT = ROWS * CELL_SIZE
+MAZE_WIDTH = COLS * CELL_SIZE
+MAZE_HEIGHT = ROWS * CELL_SIZE
+GAP = 40
+INFO_HEIGHT = 90
+WIDTH = MAZE_WIDTH * 2 + GAP
+HEIGHT = MAZE_HEIGHT + INFO_HEIGHT
 
 BG_COLOR = (20, 20, 30)
 WALL_COLOR = (230, 230, 230)
@@ -14,6 +19,8 @@ VISITED_COLOR = (40, 60, 90)
 CURRENT_COLOR = (255, 180, 0)
 SEARCH_COLOR = (90, 40, 120)
 PATH_COLOR = (0, 200, 120)
+TEXT_COLOR = (230, 230, 230)
+WIN_COLOR = (255, 215, 0)
 
 
 class Cell:
@@ -23,8 +30,8 @@ class Cell:
         self.walls = {"top": True, "right": True, "bottom": True, "left": True}
         self.visited = False
 
-    def fill(self, screen, color, margin=0):
-        x = self.col * CELL_SIZE
+    def fill(self, screen, color, offset_x=0, margin=0):
+        x = offset_x + self.col * CELL_SIZE
         y = self.row * CELL_SIZE
         pygame.draw.rect(
             screen,
@@ -32,8 +39,8 @@ class Cell:
             (x + margin, y + margin, CELL_SIZE - 2 * margin, CELL_SIZE - 2 * margin),
         )
 
-    def draw_walls(self, screen):
-        x = self.col * CELL_SIZE
+    def draw_walls(self, screen, offset_x=0):
+        x = offset_x + self.col * CELL_SIZE
         y = self.row * CELL_SIZE
         if self.walls["top"]:
             pygame.draw.line(screen, WALL_COLOR, (x, y), (x + CELL_SIZE, y), 2)
@@ -105,17 +112,21 @@ def generation_step(grid, stack):
         stack.pop()
 
 
-class DFSSolver:
-    name = "DFS"
+class Solver:
+    name = "Solver"
 
     def __init__(self, grid, start, end):
         self.grid = grid
         self.end = end
-        self.frontier = [start]  # stack: last in, first out
+        self.frontier = deque([start])
         self.came_from = {start: None}
         self.explored = set()
         self.path = []
+        self.steps = 0
         self.done = False
+
+    def take(self):
+        raise NotImplementedError
 
     def step(self):
         if self.done:
@@ -124,9 +135,8 @@ class DFSSolver:
             self.done = True  # no path found
             return
 
-        current = self.frontier.pop()
-        if current in self.explored:
-            return
+        current = self.take()
+        self.steps += 1
         self.explored.add(current)
 
         if current is self.end:
@@ -135,7 +145,7 @@ class DFSSolver:
             return
 
         for neighbor in get_open_neighbors(self.grid, current):
-            if neighbor not in self.explored:
+            if neighbor not in self.came_from:
                 self.came_from[neighbor] = current
                 self.frontier.append(neighbor)
 
@@ -149,6 +159,20 @@ class DFSSolver:
         return path
 
 
+class DFSSolver(Solver):
+    name = "DFS"
+
+    def take(self):
+        return self.frontier.pop()  # newest cell (stack)
+
+
+class BFSSolver(Solver):
+    name = "BFS"
+
+    def take(self):
+        return self.frontier.popleft()  # oldest cell (queue)
+
+
 def new_maze():
     grid = create_grid()
     start = grid[0][0]
@@ -159,14 +183,56 @@ def new_maze():
     return grid, stack
 
 
+def draw_maze(screen, grid, solver, stack, offset_x):
+    for row in grid:
+        for cell in row:
+            if cell.visited:
+                cell.fill(screen, VISITED_COLOR, offset_x)
+    if solver:
+        for cell in solver.explored:
+            cell.fill(screen, SEARCH_COLOR, offset_x)
+        for cell in solver.path:
+            cell.fill(screen, PATH_COLOR, offset_x, margin=8)
+    for row in grid:
+        for cell in row:
+            cell.draw_walls(screen, offset_x)
+    if stack:
+        stack[-1].fill(screen, CURRENT_COLOR, offset_x, margin=4)
+
+
+def draw_stats(screen, font, solver, offset_x, winner):
+    if solver is None:
+        lines = ["Generating maze..."]
+        color = TEXT_COLOR
+    else:
+        status = "done" if solver.done else "searching..."
+        lines = [
+            f"{solver.name} - {status}",
+            f"Cells explored: {len(solver.explored)}",
+            f"Path length: {len(solver.path) if solver.path else '-'}",
+        ]
+        color = WIN_COLOR if solver is winner else TEXT_COLOR
+        if solver is winner:
+            lines[0] += "  - finished first!"
+
+    y = MAZE_HEIGHT + 10
+    for line in lines:
+        screen.blit(font.render(line, True, color), (offset_x + 5, y))
+        y += 24
+
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH + 1, HEIGHT + 1))
-    pygame.display.set_caption("Maze Solver - press R for a new maze")
+    pygame.display.set_caption("Maze Solver Race - press R for a new maze")
     clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 26)
 
     grid, stack = new_maze()
-    solver = None
+    solvers = []
+    winner = None
+    left_x = 0
+    right_x = MAZE_WIDTH + GAP
 
     running = True
     while running:
@@ -175,32 +241,30 @@ def main():
                 running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
                 grid, stack = new_maze()
-                solver = None
+                solvers = []
+                winner = None
 
-        # 1. Generate, then 2. solve
+        # 1. Generate, then 2. race the solvers
         if stack:
             generation_step(grid, stack)
-        elif solver is None:
-            solver = DFSSolver(grid, grid[0][0], grid[ROWS - 1][COLS - 1])
+        elif not solvers:
+            start = grid[0][0]
+            end = grid[ROWS - 1][COLS - 1]
+            solvers = [DFSSolver(grid, start, end), BFSSolver(grid, start, end)]
         else:
-            solver.step()
+            for solver in solvers:
+                solver.step()
+                if solver.done and solver.path and winner is None:
+                    winner = solver
 
         # Draw
         screen.fill(BG_COLOR)
-        for row in grid:
-            for cell in row:
-                if cell.visited:
-                    cell.fill(screen, VISITED_COLOR)
-        if solver:
-            for cell in solver.explored:
-                cell.fill(screen, SEARCH_COLOR)
-            for cell in solver.path:
-                cell.fill(screen, PATH_COLOR, margin=10)
-        for row in grid:
-            for cell in row:
-                cell.draw_walls(screen)
-        if stack:
-            stack[-1].fill(screen, CURRENT_COLOR, margin=4)
+        left_solver = solvers[0] if solvers else None
+        right_solver = solvers[1] if solvers else None
+        draw_maze(screen, grid, left_solver, stack, left_x)
+        draw_maze(screen, grid, right_solver, stack, right_x)
+        draw_stats(screen, font, left_solver, left_x, winner)
+        draw_stats(screen, font, right_solver, right_x, winner)
 
         pygame.display.flip()
         clock.tick(60)
