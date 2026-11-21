@@ -1,3 +1,5 @@
+import heapq
+import itertools
 import random
 from collections import deque
 
@@ -9,8 +11,9 @@ ROWS = 15
 MAZE_WIDTH = COLS * CELL_SIZE
 MAZE_HEIGHT = ROWS * CELL_SIZE
 GAP = 40
+PANELS = 3
 INFO_HEIGHT = 90
-WIDTH = MAZE_WIDTH * 2 + GAP
+WIDTH = MAZE_WIDTH * PANELS + GAP * (PANELS - 1)
 HEIGHT = MAZE_HEIGHT + INFO_HEIGHT
 
 BG_COLOR = (20, 20, 30)
@@ -117,6 +120,7 @@ class Solver:
 
     def __init__(self, grid, start, end):
         self.grid = grid
+        self.start = start
         self.end = end
         self.frontier = deque([start])
         self.came_from = {start: None}
@@ -128,6 +132,11 @@ class Solver:
     def take(self):
         raise NotImplementedError
 
+    def consider(self, neighbor, current):
+        if neighbor not in self.came_from:
+            self.came_from[neighbor] = current
+            self.frontier.append(neighbor)
+
     def step(self):
         if self.done:
             return
@@ -136,6 +145,9 @@ class Solver:
             return
 
         current = self.take()
+        if current is None:
+            self.done = True
+            return
         self.steps += 1
         self.explored.add(current)
 
@@ -145,9 +157,8 @@ class Solver:
             return
 
         for neighbor in get_open_neighbors(self.grid, current):
-            if neighbor not in self.came_from:
-                self.came_from[neighbor] = current
-                self.frontier.append(neighbor)
+            if neighbor not in self.explored:
+                self.consider(neighbor, current)
 
     def build_path(self):
         path = []
@@ -171,6 +182,34 @@ class BFSSolver(Solver):
 
     def take(self):
         return self.frontier.popleft()  # oldest cell (queue)
+
+
+class AStarSolver(Solver):
+    name = "A*"
+
+    def __init__(self, grid, start, end):
+        super().__init__(grid, start, end)
+        self.counter = itertools.count()  # tie-breaker so cells are never compared
+        self.g = {start: 0}
+        self.frontier = [(self.heuristic(start), next(self.counter), start)]
+
+    def heuristic(self, cell):
+        return abs(cell.col - self.end.col) + abs(cell.row - self.end.row)
+
+    def take(self):
+        while self.frontier:
+            _, _, cell = heapq.heappop(self.frontier)
+            if cell not in self.explored:
+                return cell
+        return None
+
+    def consider(self, neighbor, current):
+        new_g = self.g[current] + 1
+        if new_g < self.g.get(neighbor, float("inf")):
+            self.g[neighbor] = new_g
+            self.came_from[neighbor] = current
+            f = new_g + self.heuristic(neighbor)
+            heapq.heappush(self.frontier, (f, next(self.counter), neighbor))
 
 
 def new_maze():
@@ -228,11 +267,12 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 26)
 
+    solver_classes = [DFSSolver, BFSSolver, AStarSolver]
+    offsets = [i * (MAZE_WIDTH + GAP) for i in range(PANELS)]
+
     grid, stack = new_maze()
     solvers = []
     winner = None
-    left_x = 0
-    right_x = MAZE_WIDTH + GAP
 
     running = True
     while running:
@@ -250,7 +290,7 @@ def main():
         elif not solvers:
             start = grid[0][0]
             end = grid[ROWS - 1][COLS - 1]
-            solvers = [DFSSolver(grid, start, end), BFSSolver(grid, start, end)]
+            solvers = [cls(grid, start, end) for cls in solver_classes]
         else:
             for solver in solvers:
                 solver.step()
@@ -259,12 +299,10 @@ def main():
 
         # Draw
         screen.fill(BG_COLOR)
-        left_solver = solvers[0] if solvers else None
-        right_solver = solvers[1] if solvers else None
-        draw_maze(screen, grid, left_solver, stack, left_x)
-        draw_maze(screen, grid, right_solver, stack, right_x)
-        draw_stats(screen, font, left_solver, left_x, winner)
-        draw_stats(screen, font, right_solver, right_x, winner)
+        for i, offset_x in enumerate(offsets):
+            solver = solvers[i] if solvers else None
+            draw_maze(screen, grid, solver, stack, offset_x)
+            draw_stats(screen, font, solver, offset_x, winner)
 
         pygame.display.flip()
         clock.tick(60)
