@@ -311,6 +311,8 @@ def main():
                     grid, stack = new_maze()
                     solvers = []
                     winner = None
+                elif event.key == pygame.K_s:
+                    pygame.image.save(screen, "screenshot.png")
 
         # 1. Generate, then 2. race the solvers
         if stack:
